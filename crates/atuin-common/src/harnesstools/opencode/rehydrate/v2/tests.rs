@@ -652,7 +652,14 @@ fn a_continuation_s_calls_are_opencode_2_s_tools() {
             ..said_by_assistant("t1", calls.iter().map(answer).collect())
         },
     ]);
-    let continued = continuation::continue_in(CLAUDE, &original, None, OPENCODE).unwrap();
+    let continued = continuation::continue_in(
+        CLAUDE,
+        &original,
+        None,
+        OPENCODE,
+        continuation::DEFAULT_MAX_BYTES,
+    )
+    .unwrap();
     let written = export(&continued.session);
     let tools: Vec<(String, Value)> = written["messages"]
         .as_array()

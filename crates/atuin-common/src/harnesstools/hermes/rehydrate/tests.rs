@@ -331,6 +331,7 @@ async fn a_continuation_names_no_route() {
         &original,
         None,
         HERMES,
+        crate::harnesstools::continuation::DEFAULT_MAX_BYTES,
     )
     .unwrap()
     .session;
