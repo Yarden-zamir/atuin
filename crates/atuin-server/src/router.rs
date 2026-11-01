@@ -4,7 +4,7 @@ use atuin_domain::api::{ATUIN_CARGO_VERSION, ATUIN_HEADER_VERSION, ErrorResponse
 use atuin_domain::caps::axum::{CapabilitiesRouterExt, get as capabilities_endpoint};
 use atuin_domain::caps::{CapServer, CapabilitiesCap, PageSizeCap};
 use axum::Router;
-use axum::extract::{FromRequestParts, Request};
+use axum::extract::{DefaultBodyLimit, FromRequestParts, Request};
 use axum::http::request::Parts;
 use axum::http::{self};
 use axum::middleware::Next;
@@ -104,13 +104,32 @@ pub struct AppState {
     pub settings: Settings,
 }
 
+/// Records per sync page, as the server advertises it.
+const PAGE_SIZE: u64 = 100;
+
+/// Room per record for the JSON around its data: ids, index, timestamps, tag and version.
+const RECORD_OVERHEAD: u64 = 1024;
+
+/// The body limit of a record upload: a full page of records of `max_record_size` each.
+/// axum's default of 2 MiB is less than one page of thread records, so a sync fails with 413.
+fn record_upload_limit(settings: &Settings) -> DefaultBodyLimit {
+    match settings.max_record_size.as_u64() {
+        // `max_record_size = 0` means records of any size.
+        0 => DefaultBodyLimit::disable(),
+        max => {
+            let page = max.saturating_add(RECORD_OVERHEAD).saturating_mul(PAGE_SIZE);
+            DefaultBodyLimit::max(usize::try_from(page).unwrap_or(usize::MAX))
+        }
+    }
+}
+
 fn capabilities() -> CapServer {
     CapServer::new()
         .add(CapabilitiesCap { version: 1 })
         .expect("CapabilitiesCap is registered exactly once")
         .add(PageSizeCap {
             version: 1,
-            page_size: 100,
+            page_size: PAGE_SIZE,
         })
         .expect("PageSizeCap is registered exactly once")
 }
@@ -128,7 +147,10 @@ pub fn router(database: Arc<dyn DynDatabase>, settings: Settings) -> Router {
         .route("/register", post(handlers::user::register))
         .route("/login", post(handlers::user::login))
         .route("/api/v0/me", get(handlers::v0::me::get))
-        .route("/api/v0/record", post(handlers::v0::record::post))
+        .route(
+            "/api/v0/record",
+            post(handlers::v0::record::post).layer(record_upload_limit(&settings)),
+        )
         .route("/api/v0/record", get(handlers::v0::record::index))
         .route("/api/v0/record/next", get(handlers::v0::record::next))
         .route("/api/v0/store", delete(handlers::v0::store::delete))

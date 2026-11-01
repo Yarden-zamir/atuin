@@ -271,3 +271,27 @@ async fn upload_sends_exactly_the_missing_records(
     assert_eq!(remote_idx, local_max, "remote is missing records");
     assert_eq!(uploaded, expected);
 }
+
+/// A page of records larger than axum's default body limit of 2 MiB uploads: one page of
+/// thread records, with tool output in them, often is.
+#[rstest]
+#[tokio::test]
+async fn upload_accepts_a_page_over_two_mebibytes(#[future(awt)] server: TestServer) {
+    let client = server.register().await;
+    let host = HostId(uuid_v7());
+    let tag = RecordTag::Other(uuid_v7().as_simple().to_string());
+    let records: Vec<_> = (0..4)
+        .map(|idx| {
+            Record::builder()
+                .host(Host::new(host))
+                .version("v0".to_string().into())
+                .tag(tag.clone())
+                .idx(idx)
+                .data(DecryptedData(vec![b'x'; 1024 * 1024]))
+                .build()
+                .encrypt(&key())
+        })
+        .collect();
+
+    client.post_records(&records).await.unwrap();
+}
