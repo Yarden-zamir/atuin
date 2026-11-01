@@ -1126,6 +1126,12 @@ pub struct Settings {
     #[serde(default, skip_serializing)]
     pub extra_headers: HashMap<String, SecretString>,
 
+    /// Extra HTTP headers whose values come from environment variables: header name to
+    /// variable name. This keeps secrets out of the config file. They join
+    /// [`Self::extra_headers`] when the settings load.
+    #[serde(default, skip_serializing)]
+    pub extra_headers_env: HashMap<String, String>,
+
     pub enter_accept: bool,
     pub smart_sort: bool,
     pub command_chaining: bool,
@@ -1634,6 +1640,7 @@ impl Settings {
             .set_default("network_connect_timeout", 5)?
             .set_default("network_timeout", 30)?
             .set_default("extra_headers", HashMap::<String, String>::new())?
+            .set_default("extra_headers_env", HashMap::<String, String>::new())?
             .set_default("local_timeout", 2.0)?
             // enter_accept defaults to false here, but true in the default config file. The dissonance is
             // intentional!
@@ -1951,13 +1958,40 @@ impl Settings {
 
     pub fn new() -> Result<Self> {
         let config = Self::build_config()?;
-        let settings: Self =
+        let mut settings: Self =
             config.try_deserialize().map_err(|e| eyre!("failed to deserialize: {}", e))?;
 
         // Validate UI settings
         settings.ui.validate()?;
+        settings.resolve_extra_headers_env()?;
 
         Ok(settings)
+    }
+
+    /// Adds each [`Self::extra_headers_env`] header to [`Self::extra_headers`], with the value of
+    /// its environment variable. A header set in both is an error.
+    ///
+    /// A variable that is not set skips its header with a warning, and is not an error: a process
+    /// without the secret (an agent's MCP server, a bash shell) still searches and records
+    /// history. Only its requests to the sync server go without the header, and fail there.
+    fn resolve_extra_headers_env(&mut self) -> Result<()> {
+        for (name, var) in &self.extra_headers_env {
+            if self.extra_headers.keys().any(|set| set.eq_ignore_ascii_case(name)) {
+                return Err(eyre!(
+                    "header {name:?} is set in both extra_headers and extra_headers_env"
+                ));
+            }
+            match atuin_common::env::var(var) {
+                Ok(value) => {
+                    self.extra_headers.insert(name.clone(), SecretString::from(value));
+                }
+                Err(e) => tracing::warn!(
+                    "extra_headers_env {name:?}: environment variable {var:?}: {e}; sync requests \
+                     go without this header"
+                ),
+            }
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -2784,5 +2818,68 @@ mod tests {
     ) {
         assert_eq!(requested.effective_mode(), expected);
         assert_eq!(SearchMode::from(requested), expected);
+    }
+
+    fn with_headers(
+        extra_headers: &[(&str, &str)],
+        extra_headers_env: &[(&str, &str)],
+    ) -> Settings {
+        let to_map = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect::<std::collections::HashMap<_, _>>()
+        };
+        Settings::builder_with_data_dir(Path::new("/data"))
+            .unwrap()
+            .set_override("extra_headers", to_map(extra_headers))
+            .unwrap()
+            .set_override("extra_headers_env", to_map(extra_headers_env))
+            .unwrap()
+            .build()
+            .unwrap()
+            .try_deserialize()
+            .unwrap()
+    }
+
+    #[test]
+    fn extra_headers_env_reads_values_from_the_environment() {
+        use secrecy::ExposeSecret as _;
+        let env = MockEnv::install();
+        env.set("HOME", "/home/user");
+        env.set("ACCESS_SECRET", "s3cret");
+        let mut settings = with_headers(&[("CF-Access-Client-Id", "id")], &[(
+            "CF-Access-Client-Secret",
+            "ACCESS_SECRET",
+        )]);
+        settings.resolve_extra_headers_env().unwrap();
+        let secret = settings
+            .extra_headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("CF-Access-Client-Secret"));
+        assert_eq!(secret.map(|(_, v)| v.expose_secret()), Some("s3cret"));
+        assert_eq!(settings.extra_headers.len(), 2);
+    }
+
+    #[test]
+    fn extra_headers_env_skips_an_unset_variable() {
+        let env = MockEnv::install();
+        env.set("HOME", "/home/user");
+        env.remove("UNSET_ACCESS_SECRET");
+        let mut settings = with_headers(&[], &[("CF-Access-Client-Secret", "UNSET_ACCESS_SECRET")]);
+        settings.resolve_extra_headers_env().unwrap();
+        assert!(settings.extra_headers.is_empty());
+    }
+
+    #[test]
+    fn extra_headers_env_refuses_a_header_set_in_both() {
+        let env = MockEnv::install();
+        env.set("HOME", "/home/user");
+        env.set("ACCESS_SECRET", "s3cret");
+        let mut settings = with_headers(&[("cf-access-client-secret", "x")], &[(
+            "CF-Access-Client-Secret",
+            "ACCESS_SECRET",
+        )]);
+        assert!(settings.resolve_extra_headers_env().is_err());
     }
 }
