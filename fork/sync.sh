@@ -21,9 +21,12 @@ if ! git rebase origin/main; then
   echo "rebase conflict: resolve it in $(pwd), then run this script again" >&2
   exit 1
 fi
-installed=$(atuin info 2>/dev/null | grep '^commit:' || true)
+# `atuin info` can show an old commit: build.rs reads it, but cargo does not run build.rs again
+# for a new commit. So this script records what it installed.
+stamp="${XDG_STATE_HOME:-$HOME/.local/state}/atuin-fork/installed"
+installed=$(cat "$stamp" 2>/dev/null || true)
 if [ "$(git rev-parse HEAD)" = "$before" ] && [ "$(git rev-parse HEAD)" = "$(git rev-parse fork/yarden 2>/dev/null)" ] \
-  && [[ "$installed" == *"$(git rev-parse HEAD)"* ]]; then
+  && [ "$installed" = "$(git rev-parse HEAD)" ]; then
   echo "up to date: $(git log -1 --format='%h %s')"
   exit 0
 fi
@@ -33,6 +36,7 @@ fi
 
 git push --quiet --force-with-lease fork yarden
 "${nogit[@]}" cargo install --locked --quiet --path crates/atuin
+mkdir -p "$(dirname "$stamp")" && git rev-parse HEAD > "$stamp"
 # `atuin daemon status` exits 0 also when no daemon runs, so read its first line.
 if atuin daemon status 2>&1 | grep -q '^Daemon running'; then atuin daemon restart; fi
-echo "installed: $(atuin --version), commit $(git log -1 --format='%h %s')"
+echo "installed: commit $(git log -1 --format='%h %s')"
