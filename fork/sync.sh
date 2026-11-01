@@ -33,5 +33,6 @@ fi
 
 git push --quiet --force-with-lease fork yarden
 "${nogit[@]}" cargo install --locked --quiet --path crates/atuin
-if atuin daemon status >/dev/null 2>&1; then atuin daemon restart; fi
+# `atuin daemon status` exits 0 also when no daemon runs, so read its first line.
+if atuin daemon status 2>&1 | grep -q '^Daemon running'; then atuin daemon restart; fi
 echo "installed: $(atuin --version), commit $(git log -1 --format='%h %s')"
