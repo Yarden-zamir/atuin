@@ -189,6 +189,11 @@ enter_accept = true
 ## headers are never sent to a different origin.
 # extra_headers = { "CF-Access-Client-Id" = "...", "CF-Access-Client-Secret" = "..." }
 
+## Extra headers whose values come from environment variables: header name to variable
+## name. Use it for secrets, so they stay out of this file. A variable that is not set skips
+## its header with a warning. A header that is also in extra_headers is an error.
+# extra_headers_env = { "CF-Access-Client-Secret" = "ATUIN_CF_ACCESS_CLIENT_SECRET" }
+
 ## Timeout (in seconds) for acquiring a local database connection (sqlite)
 # local_timeout = 2
 
