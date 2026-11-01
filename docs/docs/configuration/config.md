@@ -617,6 +617,24 @@ than the one you configured.
 extra_headers = { "CF-Access-Client-Id" = "...", "CF-Access-Client-Secret" = "..." }
 ```
 
+### `extra_headers_env`
+
+Default: `{}`
+
+Extra headers like `extra_headers`, but each value comes from an environment
+variable. The key is the header name and the value is the variable name. Use it
+for secrets, so that they stay out of the config file, for example when the
+config file is in a public dotfiles repository.
+
+When a variable is not set, Atuin logs a warning and sends requests without
+that header, so search and history still work in a process without the secret.
+A header in both `extra_headers` and `extra_headers_env` is an error.
+
+```toml
+extra_headers = { "CF-Access-Client-Id" = "<client id>.access" }
+extra_headers_env = { "CF-Access-Client-Secret" = "ATUIN_CF_ACCESS_CLIENT_SECRET" }
+```
+
 ### `local_timeout`
 
 Default: `2s`
