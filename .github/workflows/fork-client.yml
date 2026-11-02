@@ -1,0 +1,37 @@
+# Builds the atuin client of this fork for Linux, so machines install it without a Rust build.
+# The release `yarden-latest` holds the binaries of the newest `yarden` commit. fork/install.sh
+# downloads them.
+name: fork-client
+
+on:
+  push:
+    branches: [yarden]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build
+        run: cargo build --release --locked -p atuin
+      - name: Upload to the yarden-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: atuin-${{ matrix.target }}
+        run: |
+          cp target/release/atuin "$ASSET"
+          gh release view yarden-latest >/dev/null 2>&1 \
+            || gh release create yarden-latest --prerelease --target yarden \
+              --title "yarden latest" --notes "The atuin client of the newest commit on the yarden branch."
+          gh release upload yarden-latest "$ASSET" --clobber
