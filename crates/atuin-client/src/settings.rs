@@ -1132,6 +1132,11 @@ pub struct Settings {
     #[serde(default, skip_serializing)]
     pub extra_headers_env: HashMap<String, String>,
 
+    /// Record stores that sync leaves out, by name (`history`, `ai-session`, `kv`, ...). Their
+    /// records stay on this machine: sync neither uploads nor downloads them.
+    #[serde(default)]
+    pub sync_skip_stores: Vec<String>,
+
     pub enter_accept: bool,
     pub smart_sort: bool,
     pub command_chaining: bool,
@@ -1641,6 +1646,7 @@ impl Settings {
             .set_default("network_timeout", 30)?
             .set_default("extra_headers", HashMap::<String, String>::new())?
             .set_default("extra_headers_env", HashMap::<String, String>::new())?
+            .set_default("sync_skip_stores", Vec::<String>::new())?
             .set_default("local_timeout", 2.0)?
             // enter_accept defaults to false here, but true in the default config file. The dissonance is
             // intentional!
@@ -1964,6 +1970,7 @@ impl Settings {
         // Validate UI settings
         settings.ui.validate()?;
         settings.resolve_extra_headers_env()?;
+        settings.check_sync_skip_stores()?;
 
         Ok(settings)
     }
@@ -1989,6 +1996,21 @@ impl Settings {
                     "extra_headers_env {name:?}: environment variable {var:?}: {e}; sync requests \
                      go without this header"
                 ),
+            }
+        }
+        Ok(())
+    }
+
+    /// Refuses a name in [`Self::sync_skip_stores`] that is not a known store: a typo would
+    /// otherwise sync the store that it meant to leave out.
+    fn check_sync_skip_stores(&self) -> Result<()> {
+        use std::str::FromStr as _;
+
+        use atuin_domain::record::RecordTag;
+
+        for name in &self.sync_skip_stores {
+            if let Ok(RecordTag::Other(_)) | Err(_) = RecordTag::from_str(name) {
+                return Err(eyre!("sync_skip_stores: {name:?} is not a record store"));
             }
         }
         Ok(())
@@ -2881,5 +2903,22 @@ mod tests {
             "ACCESS_SECRET",
         )]);
         assert!(settings.resolve_extra_headers_env().is_err());
+    }
+
+    #[rstest]
+    #[case::known(&["history", "ai-session"], true)]
+    #[case::typo(&["histroy"], false)]
+    fn sync_skip_stores_accepts_only_known_stores(#[case] names: &[&str], #[case] ok: bool) {
+        let env = MockEnv::install();
+        env.set("HOME", "/home/user");
+        let settings: Settings = Settings::builder_with_data_dir(Path::new("/data"))
+            .unwrap()
+            .set_override("sync_skip_stores", names.to_vec())
+            .unwrap()
+            .build()
+            .unwrap()
+            .try_deserialize()
+            .unwrap();
+        assert_eq!(settings.check_sync_skip_stores().is_ok(), ok);
     }
 }

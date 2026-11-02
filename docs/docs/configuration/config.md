@@ -625,6 +625,25 @@ extra_headers = { "CF-Access-Client-Id" = "<client id>.access" }
 extra_headers_env = { "CF-Access-Client-Secret" = "ATUIN_CF_ACCESS_CLIENT_SECRET" }
 ```
 
+### `sync_skip_stores`
+
+Default: `[]`
+
+Record stores that sync leaves out. Sync neither uploads nor downloads their
+records, so they stay on this machine. For example, to sync agent threads to
+every machine but keep shell history local:
+
+```toml
+sync_skip_stores = ["history"]
+```
+
+The stores are `history`, `ai-session` (agent threads), `kv`, `script`,
+`dotfiles-var` and `config-shell-alias`. A name that is not a store is an error,
+so that a typo never syncs the store that you meant to leave out.
+
+Records that are already on the server stay there. To remove them, delete the
+store on the server and sync again.
+
 ### `local_timeout`
 
 Default: `2s`
