@@ -135,6 +135,8 @@ pub struct SyncSession {
     /// An explicit page-size override set via [`Self::with_page_size`]. When `None`, the page size
     /// is negotiated from the server's capabilities. See [`Self::get_page_size`].
     page_size_override: Option<NonZeroU64>,
+    /// The `sync_skip_stores` setting: stores whose records sync neither uploads nor downloads.
+    skip_stores: Vec<String>,
 }
 
 /// A [`SyncSession`] paired with an encryption key, for the operations that encrypt or decrypt.
@@ -247,7 +249,8 @@ impl SyncSession {
                 msg: format!("{e:#}"),
             })?;
 
-        let diff = local_index.diff(&remote_index);
+        let mut diff = local_index.diff(&remote_index);
+        diff.retain(|d| !self.skip_stores.iter().any(|skip| skip == d.series.tag.as_str()));
 
         Ok((diff, remote_index))
     }
@@ -1187,6 +1190,38 @@ mod packfile_sync_tests {
             session.check_key_against_index(&key, &remote_index).await.is_none(),
             "a plaintext packfile manifest must not be treated as a wrong key"
         );
+    }
+
+    /// A store in `sync_skip_stores` leaves the diff, so sync neither uploads nor downloads it.
+    #[rstest]
+    #[tokio::test]
+    async fn diff_leaves_out_skipped_stores(key: paseto_v4::Key, #[future] server: MockServer) {
+        let host = HostId(uuid_v7());
+        let store = memory_store().await;
+        seed_history(&store, host, &key, 3).await;
+
+        let server = server.await;
+        Mock::given(method("GET"))
+            .and(path("/api/v0/record"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header(
+                        atuin_domain::api::ATUIN_HEADER_VERSION,
+                        atuin_domain::api::ATUIN_CARGO_VERSION,
+                    )
+                    .set_body_json(RecordStatus::new()),
+            )
+            .mount(&server)
+            .await;
+        let addr: url::Url = server.uri().parse().unwrap();
+
+        let mut session = build_session(mock_client(&addr), store).await;
+        let (diff, _) = session.diff().await.unwrap();
+        assert_eq!(diff.len(), 1, "history uploads without the setting");
+
+        session.skip_stores = vec!["history".to_owned()];
+        let (diff, _) = session.diff().await.unwrap();
+        assert!(diff.is_empty());
     }
 
     /// GUARD: excluding the packfile tag must not weaken real detection -- a genuinely wrong key

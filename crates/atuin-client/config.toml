@@ -194,6 +194,11 @@ enter_accept = true
 ## its header with a warning. A header that is also in extra_headers is an error.
 # extra_headers_env = { "CF-Access-Client-Secret" = "ATUIN_CF_ACCESS_CLIENT_SECRET" }
 
+## Record stores that sync leaves out: their records stay on this machine. For example,
+## sync agent threads but keep shell history local. A name that is not a store is an error.
+## Stores: history, ai-session, kv, script, dotfiles-var, config-shell-alias.
+# sync_skip_stores = ["history"]
+
 ## Timeout (in seconds) for acquiring a local database connection (sqlite)
 # local_timeout = 2
 
