@@ -33,6 +33,10 @@ impl SyncSessionInit<'_> {
     /// Resolve the configured inputs into a live [`SyncSession`].
     #[instrument(level = "trace", skip_all, err)]
     pub async fn connect(self) -> Result<SyncSession, SyncError> {
+        let skip_stores = match &self.client_source {
+            ClientSource::FromClient(_) => Vec::new(),
+            ClientSource::FromSettings { settings, .. } => settings.sync_skip_stores.clone(),
+        };
         let client = match self.client_source {
             ClientSource::FromClient(client) => client,
             ClientSource::FromSettings { settings, caps } => {
@@ -67,6 +71,7 @@ impl SyncSessionInit<'_> {
             client,
             store: self.store,
             page_size_override: None,
+            skip_stores,
         })
     }
 }
