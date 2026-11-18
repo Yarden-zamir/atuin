@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Rebase the `yarden` branch of the fork onto upstream main, test it, push it, and install it.
-# Exit codes: 0 done or already up to date, 1 rebase conflict (the rebase is aborted), 2 tests failed.
+# Exit codes: 0 done or already up to date, 1 rebase conflict (the rebase is aborted), 2 tests failed,
+# 3 the daemon does not run the installed build.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -10,6 +11,31 @@ cd "$(dirname "$0")/.."
 # Tests and builds spawn git: keep the global hooks out of them. Git commands of this script
 # keep the global config, because it holds the credential helper for the push.
 nogit=(env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1)
+
+# A daemon of another build refuses requests from this client (agents see "daemon and client
+# builds differ"), so restart it on the installed binary. On macOS launchd runs it as an agent.
+# Fail loudly when a daemon still runs another build.
+ensure_daemon_build() {
+  local agent="gui/$(id -u)/sh.atuin.daemon" version build status
+  version=$(atuin --version)
+  build=${version##*(}
+  build=${build%)}
+  status=$(atuin daemon status 2>&1 || true)
+  [[ "$status" != *"Daemon running"* || "$status" == *"+$build"* ]] && return 0
+  if launchctl print "$agent" >/dev/null 2>&1; then
+    launchctl kickstart -k "$agent"
+  else
+    atuin daemon restart
+  fi
+  for _ in $(seq 20); do
+    status=$(atuin daemon status 2>&1 || true)
+    [[ "$status" == *"+$build"* ]] && return 0
+    sleep 1
+  done
+  echo "the daemon does not run the installed build $build:" >&2
+  echo "$status" >&2
+  exit 3
+}
 
 git fetch --quiet origin
 git fetch --quiet fork
@@ -27,6 +53,7 @@ stamp="${XDG_STATE_HOME:-$HOME/.local/state}/atuin-fork/installed"
 installed=$(cat "$stamp" 2>/dev/null || true)
 if [ "$(git rev-parse HEAD)" = "$before" ] && [ "$(git rev-parse HEAD)" = "$(git rev-parse fork/yarden 2>/dev/null)" ] \
   && [ "$installed" = "$(git rev-parse HEAD)" ]; then
+  ensure_daemon_build
   echo "up to date: $(git log -1 --format='%h %s')"
   exit 0
 fi
@@ -37,6 +64,5 @@ fi
 git push --quiet --force-with-lease fork yarden
 "${nogit[@]}" cargo install --locked --quiet --path crates/atuin
 mkdir -p "$(dirname "$stamp")" && git rev-parse HEAD > "$stamp"
-# `atuin daemon status` exits 0 also when no daemon runs, so read its first line.
-if atuin daemon status 2>&1 | grep -q '^Daemon running'; then atuin daemon restart; fi
+ensure_daemon_build
 echo "installed: commit $(git log -1 --format='%h %s')"
