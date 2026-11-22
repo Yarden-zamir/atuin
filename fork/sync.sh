@@ -58,8 +58,14 @@ if [ "$(git rev-parse HEAD)" = "$before" ] && [ "$(git rev-parse HEAD)" = "$(git
   exit 0
 fi
 
-# Only the tests of the patched code: the full suite runs in upstream CI.
-"${nogit[@]}" cargo test --locked --quiet -p atuin-common continuation || exit 2
+# Compile every test of the crates that the patches change, with all features: some test modules
+# (continuation, each harness) compile only with them, and a new upstream test can call a function
+# that a patch changed. Then run only the tests of the patches: the full suite runs in upstream CI,
+# and some of its tests are flaky on this Mac.
+crates=(-p atuin-common -p atuin-client -p atuin-server)
+"${nogit[@]}" cargo test --locked --quiet --all-features "${crates[@]}" --no-run || exit 2
+"${nogit[@]}" cargo test --locked --quiet --all-features "${crates[@]}" -- \
+  harnesstools::continuation extra_headers skip_stores upload_accepts || exit 2
 
 git push --quiet --force-with-lease fork yarden
 "${nogit[@]}" cargo install --locked --quiet --path crates/atuin
